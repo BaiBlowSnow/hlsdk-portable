@@ -20,6 +20,7 @@
 #include "hud.h"
 #include "cl_util.h"
 //#include "triangleapi.h"
+#include "utflib.h"
 
 #if USE_VGUI
 #include "vgui_TeamFortressViewport.h"
@@ -33,6 +34,43 @@ int grgLogoFrame[MAX_LOGO_FRAMES] =
 	16, 17, 18, 19, 20, 20, 20, 20, 20, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 
 	29, 29, 29, 29, 29, 28, 27, 26, 25, 24, 30, 31 
 };
+
+int g_codepage = 0;
+qboolean g_accept_utf8;
+
+cvar_t *con_charset;
+cvar_t *cl_charset;
+
+/*
+============================
+Con_UtfProcessChar
+
+Convert utf char to current font's single-byte encoding
+============================
+*/
+int Con_UtfProcessCharForce( int in )
+{
+	// TODO: get rid of global state where possible
+	static utfstate_t state = { 0 };
+
+	uint32_t ch = Q_DecodeUTF8( &state, in );
+
+	if( g_codepage == 1251 )
+		return Q_UnicodeToCP1251( ch );
+	if( g_codepage == 1252 )
+		return Q_UnicodeToCP1252( ch );
+
+	return ch; // not implemented yet
+}
+
+int Con_UtfProcessChar( int in )
+{
+	if( !g_accept_utf8 ) // incoming character is not a UTF-8 sequence
+		return in;
+
+	// otherwise, decode it and convert to selected codepage
+	return Con_UtfProcessCharForce( in );
+}
 
 extern int g_iVisibleMouse;
 
@@ -218,6 +256,22 @@ int CHud::Redraw( float flTime, int intermission )
 	}
 	*/
 
+	// update codepage parameters
+	if( !stricmp( con_charset->string, "cp1251" ))
+	{
+		g_codepage = 1251;
+	}
+	else if( !stricmp( con_charset->string, "cp1252" ))
+	{
+		g_codepage = 1252;
+	}
+	else
+	{
+		g_codepage = 0;
+	}
+
+	g_accept_utf8 = !stricmp( cl_charset->string, "utf-8" );
+
 	return 1;
 }
 
@@ -242,7 +296,7 @@ const unsigned char colors[8][3] =
 };
 
 int CHud::DrawHudString( int xpos, int ypos, int iMaxX, const char *szIt, int r, int g, int b )
-{
+{	
 	if( hud_textmode->value == 2 )
 	{
 		gEngfuncs.pfnDrawSetTextColor( r / 255.0, g / 255.0, b / 255.0 );
@@ -258,13 +312,12 @@ int CHud::DrawHudString( int xpos, int ypos, int iMaxX, const char *szIt, int r,
 		int w = gHUD.m_scrinfo.charWidths['M'];
 		if( xpos + w  > iMaxX )
 			return xpos;
-		if( ( *szIt == '^' ) && ( *( szIt + 1 ) >= '0') && ( *( szIt + 1 ) <= '9') )
+		if( ( *szIt == '^' ) && ( *( szIt + 1 ) >= '0') && ( *( szIt + 1 ) <= '7') )
 		{
 			szIt++;
-			int index = (*szIt - '0') & 7;
-			r = colors[index][0];
-			g = colors[index][1];
-			b = colors[index][2];
+			r = colors[*szIt - '0'][0];
+			g = colors[*szIt - '0'][1];
+			b = colors[*szIt - '0'][2];
 			if( !*(++szIt) )
 				return xpos;
 		}
@@ -278,41 +331,13 @@ int CHud::DrawHudString( int xpos, int ypos, int iMaxX, const char *szIt, int r,
 
 int DrawUtfString( int xpos, int ypos, int iMaxX, const char *szIt, int r, int g, int b )
 {
-	if (IsXashFWGS())
-	{
-		// xash3d: reset unicode state
-		gEngfuncs.pfnVGUI2DrawCharacterAdditive( 0, 0, 0, 0, 0, 0, 0 );
-
-		// draw the string until we hit the null character or a newline character
-		for( ; *szIt != 0 && *szIt != '\n'; szIt++ )
-		{
-			int w = gHUD.m_scrinfo.charWidths['M'];
-			if( xpos + w  > iMaxX )
-				return xpos;
-			if( ( *szIt == '^' ) && ( *( szIt + 1 ) >= '0') && ( *( szIt + 1 ) <= '9') )
-			{
-				szIt++;
-				int index = (*szIt - '0') & 7;
-				r = colors[index][0];
-				g = colors[index][1];
-				b = colors[index][2];
-				if( !*(++szIt) )
-					return xpos;
-			}
-			int c = (unsigned int)(unsigned char)*szIt;
-			xpos += gEngfuncs.pfnVGUI2DrawCharacterAdditive( xpos, ypos, c, r, g, b, 0 );
-		}
-		return xpos;
-	}
-	else
-	{
-		return gHUD.DrawHudString(xpos, ypos, iMaxX, szIt, r, g, b);
-	}
+	return gHUD.DrawHudString(xpos, ypos, iMaxX, szIt, r, g, b);
 }
 
 int CHud::DrawHudStringLen( const char *szIt )
 {
 	int l = 0;
+	
 	for( ; *szIt != 0 && *szIt != '\n'; szIt++ )
 	{
 		l += gHUD.m_scrinfo.charWidths[(unsigned char)*szIt];

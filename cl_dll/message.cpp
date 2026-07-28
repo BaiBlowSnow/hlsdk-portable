@@ -23,6 +23,8 @@
 #include <string.h>
 #include <stdio.h>
 #include "parsemsg.h"
+#include "hud_redraw.h"
+#include "vgui_parser.h"
 
 DECLARE_MESSAGE( m_Message, HudText )
 DECLARE_MESSAGE( m_Message, GameTitle )
@@ -242,7 +244,7 @@ void CHudMessage::MessageDrawScan( client_textmessage_t *pMessage, float time )
 {
 	int i, j, length, width;
 	const char *pText;
-	const char *pLineStart;
+	unsigned char line[512];
 
 	pText = pMessage->pMessage;
 	// Count lines
@@ -252,22 +254,38 @@ void CHudMessage::MessageDrawScan( client_textmessage_t *pMessage, float time )
 	length = 0;
 	width = 0;
 	m_parms.totalWidth = 0;
-	while( *pText )
+	Con_UtfProcessChar( 0 );
+	while ( *pText )
 	{
-		if( *pText == '\n' )
+		if ( *pText == '\n' )
 		{
 			m_parms.lines++;
-			if( width > m_parms.totalWidth )
+			if ( width > m_parms.totalWidth )
 				m_parms.totalWidth = width;
 			width = 0;
 		}
 		else
-			width += gHUD.m_scrinfo.charWidths[(unsigned char)*pText];
+		{
+			int uch = Con_UtfProcessChar( (unsigned char)*pText );
+
+			if ( !uch )
+			{
+				pText++;
+				continue;
+			}
+
+			// if( uch > 128 ){
+			// 	gEngfuncs.Con_Printf("uch 是 %d (十六进制: 0x%X)\n", uch, uch);
+			// }
+
+			width += gHUD.m_scrinfo.charWidths[uch];
+		}
 		pText++;
 		length++;
 	}
 	m_parms.length = length;
-	m_parms.totalHeight = ( m_parms.lines * gHUD.m_scrinfo.iCharHeight );
+	m_parms.totalHeight = (m_parms.lines * gHUD.m_scrinfo.iCharHeight);
+
 
 	m_parms.y = YPosition( pMessage->y, m_parms.totalHeight );
 	pText = pMessage->pMessage;
@@ -276,31 +294,44 @@ void CHudMessage::MessageDrawScan( client_textmessage_t *pMessage, float time )
 
 	MessageScanStart();
 
-	for( i = 0; i < m_parms.lines; i++ )
+	for ( i = 0; i < m_parms.lines; i++ )
 	{
 		m_parms.lineLength = 0;
 		m_parms.width = 0;
-		pLineStart = pText;
-		while( *pText && *pText != '\n' )
+		while ( *pText && *pText != '\n' && m_parms.lineLength < sizeof (line) - 1)
 		{
 			unsigned char c = *pText;
-			m_parms.width += gHUD.m_scrinfo.charWidths[c];
+			line[m_parms.lineLength] = c;
 			m_parms.lineLength++;
+			int uch = Con_UtfProcessChar( c );
+
+			if ( !uch )
+			{
+				pText++;
+				continue;
+			}
+			/*
+			if( uch > 128 ){
+				gEngfuncs.Con_Printf("uch 是 %d (十六进制: 0x%X)\n", uch, uch);
+			}
+			*/
+
+			m_parms.width += gHUD.m_scrinfo.charWidths[uch];
 			pText++;
 		}
 		pText++;		// Skip LF
+		line[m_parms.lineLength] = 0;
 
 		m_parms.x = XPosition( pMessage->x, m_parms.width, m_parms.totalWidth );
 
-		for( j = 0; j < m_parms.lineLength; j++ )
+		for ( j = 0; j < m_parms.lineLength; j++ )
 		{
-			m_parms.text = (unsigned char)pLineStart[j];
+			m_parms.text = line[j];
 			int next = m_parms.x + gHUD.m_scrinfo.charWidths[m_parms.text];
 			MessageScanNextChar();
-
-			if( m_parms.x >= 0 && m_parms.y >= 0 && next <= ScreenWidth )
-				TextMessageDrawChar( m_parms.x, m_parms.y, m_parms.text, m_parms.r, m_parms.g, m_parms.b );
-			m_parms.x = next;
+			
+			if ( m_parms.x >= 0 && m_parms.y >= 0 && next <= ScreenWidth )
+				m_parms.x += TextMessageDrawChar( m_parms.x, m_parms.y, m_parms.text, m_parms.r, m_parms.g, m_parms.b );
 		}
 
 		m_parms.y += gHUD.m_scrinfo.iCharHeight;
@@ -409,62 +440,97 @@ int CHudMessage::Draw( float fTime )
 
 void CHudMessage::MessageAdd( const char *pName, float time )
 {
-	int i, j;
+	int i,j;
 	client_textmessage_t *tempMessage;
 
-	for( i = 0; i < maxHUDMessages; i++ )
+	for ( i = 0; i < maxHUDMessages; i++ )
 	{
-		if( !m_pMessages[i] )
+		if ( !m_pMessages[i] )
 		{
 			// Trim off a leading # if it's there
-			if( pName[0] == '#' ) 
-				tempMessage = TextMessageGet( pName + 1 );
+			if ( pName[0] == '#' ) 
+				tempMessage = TextMessageGet( pName+1 );
 			else
 				tempMessage = TextMessageGet( pName );
-			// If we couldnt find it in the titles.txt, just create it
-			if( !tempMessage )
-			{
-				g_pCustomMessage.effect = 2;
-				g_pCustomMessage.r1 = g_pCustomMessage.g1 = g_pCustomMessage.b1 = g_pCustomMessage.a1 = 100;
-				g_pCustomMessage.r2 = 240;
-				g_pCustomMessage.g2 = 110;
-				g_pCustomMessage.b2 = 0;
-				g_pCustomMessage.a2 = 0;
-				g_pCustomMessage.x = -1.0f;		// Centered
-				g_pCustomMessage.y = 0.7f;
-				g_pCustomMessage.fadein = 0.01f;
-				g_pCustomMessage.fadeout = 1.5f;
-				g_pCustomMessage.fxtime = 0.25f;
-				g_pCustomMessage.holdtime = 5;
-				g_pCustomMessage.pName = g_pCustomName;
-				strcpy( g_pCustomText, pName );
-				g_pCustomMessage.pMessage = g_pCustomText;
 
-				tempMessage = &g_pCustomMessage;
+			client_textmessage_t *message;
+			if( tempMessage )
+			{
+				if( tempMessage->pMessage[0] == '#' )
+				{
+					message = AllocMessage( CHudTextMessage::BufferedLocaliseTextString( tempMessage->pMessage ), tempMessage );
+				}
+				else if( !strcmp( tempMessage->pName, "Custom" ) ) // Hey, it's mine way of detecting allocated message
+				{
+					message = AllocMessage( tempMessage->pMessage, tempMessage );
+				}
+				else
+				{
+					message = tempMessage;
+				}
+			}
+			else
+			{
+				if( pName[0] == '#' )
+				{
+					pName = Localize( pName + 1 );
+				}
+
+				// If we couldnt find it in the titles.txt, just create it
+				message = AllocMessage( pName );
+
+				message->effect = 2;
+				message->r1 = message->g1 = message->b1 = message->a1 = 100;
+				message->r2 = 240;
+				message->g2 = 110;
+				message->b2 = 0;
+				message->a2 = 0;
+				message->x = -1;		// Centered
+				message->y = 0.7;
+				message->fadein = 0.01;
+				message->fadeout = 1.5;
+				message->fxtime = 0.25;
+				message->holdtime = 5;
 			}
 
-			for( j = 0; j < maxHUDMessages; j++ )
+			// safety check - don't add empty messages
+            if ( !message->pMessage || message->pMessage[0] == '\0' ) 
+            {
+                // clean up custom messages
+                if ( !strcmp(message->pName, "Custom") ) 
+                {
+                    delete[] message->pMessage;
+                }
+                return; // bail out if message is empty
+            }
+
+			for ( j = 0; j < maxHUDMessages; j++ )
 			{
-				if( m_pMessages[j] )
+				if ( m_pMessages[j] )
 				{
 					// is this message already in the list
-					if( !strcmp( tempMessage->pMessage, m_pMessages[j]->pMessage ) )
+					if ( !strcmp( message->pMessage, m_pMessages[j]->pMessage ) )
 					{
+						if( !strcmp( message->pName, "Custom" ) )
+						{
+							delete[] message->pMessage;
+						}
 						return;
 					}
 
 					// get rid of any other messages in same location (only one displays at a time)
-					if( fabs( tempMessage->y - m_pMessages[j]->y ) < 0.0001f )
+					if ( fabs( message->y - m_pMessages[j]->y ) < 0.0001 && fabs( message->x - m_pMessages[j]->x ) < 0.0001 )
 					{
-						if( fabs( tempMessage->x - m_pMessages[j]->x ) < 0.0001f )
+						if( !strcmp( m_pMessages[j]->pName, "Custom" ) )
 						{
-							m_pMessages[j] = NULL;
+							delete[] m_pMessages[j]->pMessage;
 						}
+						m_pMessages[j] = NULL;
 					}
 				}
 			}
 
-			m_pMessages[i] = tempMessage;
+			m_pMessages[i] = message;
 			m_startTime[i] = time;
 			return;
 		}
@@ -504,21 +570,49 @@ int CHudMessage::MsgFunc_GameTitle( const char *pszName,  int iSize, void *pbuf 
 	return 1;
 }
 
-void CHudMessage::MessageAdd( client_textmessage_t * newMessage )
+void CHudMessage::MessageAdd(client_textmessage_t * newMessage )
 {
 	m_parms.time = gHUD.m_flTime;
 
 	// Turn on drawing
-	if( !( m_iFlags & HUD_ACTIVE ) )
+	if ( !(m_iFlags & HUD_ACTIVE) )
 		m_iFlags |= HUD_ACTIVE;
-
-	for( int i = 0; i < maxHUDMessages; i++ )
+	
+	for ( int i = 0; i < maxHUDMessages; i++ )
 	{
-		if( !m_pMessages[i] )
+		if ( !m_pMessages[i] )
 		{
 			m_pMessages[i] = newMessage;
 			m_startTime[i] = gHUD.m_flTime;
 			return;
 		}
 	}
+}
+
+client_textmessage_t *CHudMessage::AllocMessage( const char *text, client_textmessage_t *copyFrom )
+{
+	const int MAX_CUSTOM_MESSAGES = 16;
+	const int MAX_CUSTOM_MESSAGES_MASK = (MAX_CUSTOM_MESSAGES-1);
+	static client_textmessage_t	g_pCustomMessage[MAX_CUSTOM_MESSAGES] = { };
+	static int g_iCustomMessageMod = 0;
+
+	client_textmessage_t *ret = &g_pCustomMessage[g_iCustomMessageMod];
+	g_iCustomMessageMod = (g_iCustomMessageMod + 1) & MAX_CUSTOM_MESSAGES_MASK;
+
+	if( copyFrom )
+	{
+		*ret = *copyFrom;
+	}
+
+	if( text )
+	{
+		int len = strlen( text );
+		char *szCustomText = new char[len +1];
+		strcpy( szCustomText, text );
+
+		ret->pName = "Custom";
+		ret->pMessage = szCustomText;
+	}
+
+	return ret;
 }
