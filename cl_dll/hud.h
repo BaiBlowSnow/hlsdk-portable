@@ -486,6 +486,8 @@ public:
 	void MessageScanNextChar( void );
 	void Reset( void );
 
+	client_textmessage_t *AllocMessage( const char *text = NULL, client_textmessage_t *copyFrom = NULL );
+
 private:
 	client_textmessage_t		*m_pMessages[maxHUDMessages];
 	float						m_startTime[maxHUDMessages];
